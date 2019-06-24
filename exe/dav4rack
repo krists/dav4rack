@@ -1,7 +1,9 @@
 #!/usr/bin/env ruby
 
-require 'rubygems'
-require 'dav4rack/version'
+lib = File.expand_path("../lib", __dir__)
+$LOAD_PATH.unshift(lib) unless $LOAD_PATH.include?(lib)
+
+require 'dav4rack'
 require 'getoptlong'
 
 def print_help_msg
@@ -83,44 +85,13 @@ opts.each do |opt,arg|
   end
 end
 
-require 'dav4rack'
-
 app = Rack::Builder.new do
   use Rack::ShowExceptions
   use Rack::CommonLogger
   use Rack::Reloader
   use Rack::Lint
-
   run DAV4Rack::Handler.new(credentials)
-
 end.to_app
 
-runners = []
-runners << lambda do |x|
-  print 'Looking for unicorn... '
-  require 'unicorn'
-  puts 'OK'
-  if(Unicorn.respond_to?(:run))
-    Unicorn.run(x, :listeners => ["0.0.0.0:3000"])
-  else
-    Unicorn::HttpServer.new(x, :listeners => ["0.0.0.0:3000"]).start.join
-  end
-end
-runners << lambda do |x|
-  print 'Looking for mongrel... '
-  require 'mongrel'
-  puts 'OK'
-  Rack::Handler::Mongrel.run(x, :Port => 3000)
-end
-runners << lambda do |x|
-  puts 'Loading WEBrick'
-  Rack::Handler::WEBrick.run(x, :Port => 3000)
-end
 
-begin
-  runner = runners.shift
-  runner.call(app)
-rescue LoadError
-  puts 'FAILED'
-  retry unless runners.empty?
-end
+Rack::Handler::WEBrick.run(app, :Port => 3000)

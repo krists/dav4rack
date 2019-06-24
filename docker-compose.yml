@@ -1,0 +1,13 @@
+version: '3.7'
+services:
+  dav4rack:
+    build: .
+    volumes:
+      - .:/dav4rack
+      - gems:/usr/local/bundle
+      - home:/home
+volumes:
+  home:
+    driver: local
+  gems:
+    driver: local

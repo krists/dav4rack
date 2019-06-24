@@ -1,7 +1,12 @@
 .*
 !.gitignore
-*.gem
-*~
-doc/*
-pkg/*
-test/repo
+/.bundle/
+/.yardoc
+/_yardoc/
+/coverage/
+/doc/
+/pkg/
+/tmp/
+
+# rspec failure tracking
+.rspec_status

@@ -1,239 +1,154 @@
-$:.unshift(File.expand_path(File.dirname(__FILE__) + '/../lib'))
+require "spec_helper"
 
-require 'rubygems'
-require 'dav4rack'
-require 'fileutils'
-require 'nokogiri'
-require 'rspec'
+RSpec.describe DAV4Rack::Handler do
+  let(:controller) { DAV4Rack::Handler.new(root: TEST_ROOT_DIRECTORY) }
 
-describe DAV4Rack::Handler do
-  DOC_ROOT = File.expand_path(File.dirname(__FILE__) + '/htdocs')
-  METHODS = %w(GET PUT POST DELETE PROPFIND PROPPATCH MKCOL COPY MOVE OPTIONS HEAD LOCK UNLOCK)  
-  
-  before do
-    FileUtils.mkdir(DOC_ROOT) unless File.exists?(DOC_ROOT)
-    @controller = DAV4Rack::Handler.new(:root => DOC_ROOT)
-  end
-
-  after do
-    FileUtils.rm_rf(DOC_ROOT) if File.exists?(DOC_ROOT)
-  end
-  
-  attr_reader :response
-  
-  def request(method, uri, options={})
-    options = {
-      'HTTP_HOST' => 'localhost',
-      'REMOTE_USER' => 'user'
-    }.merge(options)
-    request = Rack::MockRequest.new(@controller)
-    @response = request.request(method, uri, options)
-  end
-
-  METHODS.each do |method|
-    define_method(method.downcase) do |*args|
-      request(method, *args)
-    end
-  end  
-  
-  def render(root_type)
-    raise ArgumentError.new 'Expecting block' unless block_given?
-    doc = Nokogiri::XML::Builder.new do |xml_base|
-      xml_base.send(root_type.to_s, 'xmlns:D' => 'D:') do
-        xml_base.parent.namespace = xml_base.parent.namespace_definitions.first
-        xml = xml_base['D']
-        yield xml
-      end
-    end
-    doc.to_xml
-  end
- 
-  def url_escape(string)
-    URI.escape(string)
-  end
-  
-  def response_xml
-    Nokogiri.XML(@response.body)
-  end
-  
-  def multistatus_response(pattern)
-    @response.should be_multi_status
-    response_xml.xpath('//D:multistatus/D:response', response_xml.root.namespaces).should_not be_empty
-    response_xml.xpath("//D:multistatus/D:response#{pattern}", response_xml.root.namespaces)
-  end
-
-  def multi_status_created
-    response_xml.xpath('//D:multistatus/D:response/D:status').should_not be_empty
-    response_xml.xpath('//D:multistatus/D:response/D:status').text.should =~ /Created/
-  end
-  
-  def multi_status_ok
-    response_xml.xpath('//D:multistatus/D:response/D:status').should_not be_empty
-    response_xml.xpath('//D:multistatus/D:response/D:status').text.should =~ /OK/
-  end
-  
-  def multi_status_no_content
-    response_xml.xpath('//D:multistatus/D:response/D:status').should_not be_empty
-    response_xml.xpath('//D:multistatus/D:response/D:status').text.should =~ /No Content/
-  end
-  
-  def propfind_xml(*props)
-    render(:propfind) do |xml|
-      xml.prop do
-        props.each do |prop|
-        xml.send(prop.to_sym)
-        end
-      end
-    end
-  end
-  
   it 'should return all options' do
-    options('/').should be_ok
-    
-    METHODS.each do |method|
-      response.headers['allow'].should include(method)
+    expect(options('/')).to be_ok
+    %w(GET PUT POST DELETE PROPFIND PROPPATCH MKCOL COPY MOVE OPTIONS HEAD LOCK UNLOCK).each do |method|
+      expect(last_response.headers['allow']).to include(method)
     end
   end
   
   it 'should return headers' do
-    put('/test.html', :input => '<html/>').should be_created
-    head('/test.html').should be_ok
+    expect(put('/test.html', {}, input: '<html/>')).to be_created
+    expect(head('/test.html')).to be_ok
     
-    response.headers['etag'].should_not be_nil
-    response.headers['content-type'].should match(/html/)
-    response.headers['last-modified'].should_not be_nil
+    expect(last_response.headers['etag']).not_to be_nil
+    expect(last_response.headers['content-type']).to match(/html/)
+    expect(last_response.headers['last-modified']).not_to be_nil
   end
   
   it 'should not find a nonexistent resource' do
-    get('/not_found').should be_not_found
+    expect(get('/not_found')).to be_not_found
   end
   
   it 'should not allow directory traversal' do
-    get('/../htdocs').should be_forbidden
+    expect(get('/../htdocs')).to be_forbidden
   end
   
   it 'should create a resource and allow its retrieval' do
-    put('/test', :input => 'body').should be_created
-    get('/test').should be_ok
-    response.body.should == 'body'
+    expect(put('/test', {}, input: 'body')).to be_created
+    expect(get('/test')).to be_ok
+    expect(last_response.body).to eq('body')
   end
 
   it 'should return an absolute url after a put request' do
-    put('/test', :input => 'body').should be_created
-    response['location'].should =~ /http:\/\/localhost(:\d+)?\/test/
+    expect(put('/test', input: 'body')).to be_created
+    expect(last_response['location']).to match(/http:\/\/example\.org(:\d+)?\/test/)
   end
   
   it 'should create and find a url with escaped characters' do
-    put(url_escape('/a b'), :input => 'body').should be_created
-    get(url_escape('/a b')).should be_ok
-    response.body.should == 'body'
+    expect(put(URI.escape('/a b'), {}, input: 'body')).to be_created
+    expect(get(URI.escape('/a b'))).to be_ok
+    expect(last_response.body).to eq('body')
   end
   
   it 'should delete a single resource' do
-    put('/test', :input => 'body').should be_created
-    delete('/test').should be_no_content
+    expect(put('/test', {}, input: 'body')).to be_created
+    expect(delete('/test')).to be_no_content
   end
   
   it 'should delete recursively' do
-    mkcol('/folder').should be_created
-    put('/folder/a', :input => 'body').should be_created
-    put('/folder/b', :input => 'body').should be_created
+    expect(mkcol('/folder')).to be_created
+    expect(put('/folder/a', {}, input: 'body')).to be_created
+    expect(put('/folder/b', {}, input: 'body')).to be_created
     
-    delete('/folder').should be_no_content
-    get('/folder').should be_not_found
-    get('/folder/a').should be_not_found
-    get('/folder/b').should be_not_found
+    expect(delete('/folder')).to be_no_content
+    expect(get('/folder')).to be_not_found
+    expect(get('/folder/a')).to be_not_found
+    expect(get('/folder/b')).to be_not_found
   end
 
   it 'should not allow copy to another domain' do
-    put('/test', :input => 'body').should be_created
-    copy('http://localhost/', 'HTTP_DESTINATION' => 'http://another/').should be_bad_gateway
+    expect(put('/test', {}, input: 'body')).to be_created
+    expect(copy('http://example.org/', {}, {'HTTP_DESTINATION' => 'http://another/'})).to be_bad_gateway
   end
 
   it 'should not allow copy to the same resource' do
-    put('/test', :input => 'body').should be_created
-    copy('/test', 'HTTP_DESTINATION' => '/test').should be_forbidden
+    expect(put('/test', {}, input: 'body')).to be_created
+    expect(copy('/test', {}, {'HTTP_DESTINATION' => '/test'})).to be_forbidden
   end
 
   it 'should copy a single resource' do
-    put('/test', :input => 'body').should be_created
-    copy('/test', 'HTTP_DESTINATION' => '/copy').should be_created
-    get('/copy').body.should == 'body'
+    expect(put('/test', {}, input: 'body')).to be_created
+    expect(copy('/test', {}, {'HTTP_DESTINATION' => '/copy'})).to be_created
+    expect(get('/copy').body).to eq('body')
   end
 
   it 'should copy a resource with escaped characters' do
-    put(url_escape('/a b'), :input => 'body').should be_created
-    copy(url_escape('/a b'), 'HTTP_DESTINATION' => url_escape('/a c')).should be_created
-    get(url_escape('/a c')).should be_ok
-    response.body.should == 'body'
+    expect(put(URI.escape('/a b'), {}, input: 'body')).to be_created
+    expect(copy(URI.escape('/a b'), {}, {'HTTP_DESTINATION' => URI.escape('/a c')})).to be_created
+    expect(get(URI.escape('/a c'))).to be_ok
+    expect(last_response.body).to eq('body')
   end
   
   it 'should deny a copy without overwrite' do
-    put('/test', :input => 'body').should be_created
-    put('/copy', :input => 'copy').should be_created
-    copy('/test', 'HTTP_DESTINATION' => '/copy', 'HTTP_OVERWRITE' => 'F').should be_precondition_failed
-    get('/copy').body.should == 'copy'
+    expect(put('/test', {}, input: 'body')).to be_created
+    expect(put('/copy', {}, input: 'copy')).to be_created
+    expect(copy('/test', {}, {'HTTP_DESTINATION' => '/copy', 'HTTP_OVERWRITE' => 'F'})).to be_precondition_failed
+    expect(get('/copy').body).to eq('copy')
   end
   
   it 'should allow a copy with overwrite' do
-    put('/test', :input => 'body').should be_created
-    put('/copy', :input => 'copy').should be_created
-    copy('/test', 'HTTP_DESTINATION' => '/copy', 'HTTP_OVERWRITE' => 'T').should be_no_content
-    get('/copy').body.should == 'body'
+    expect(put('/test', {}, input: 'body')).to be_created
+    expect(put('/copy', {}, input: 'copy')).to be_created
+    expect(copy('/test', {}, {'HTTP_DESTINATION' => '/copy', 'HTTP_OVERWRITE' => 'T'})).to be_no_content
+    expect(get('/copy').body).to eq('body')
   end
   
-  it 'should copy a collection' do  
-    mkcol('/folder').should be_created
-    copy('/folder', 'HTTP_DESTINATION' => '/copy')
-    multi_status_created.should eq true
-    propfind('/copy', :input => propfind_xml(:resourcetype))
-    multistatus_response('/D:propstat/D:prop/D:resourcetype/D:collection').should_not be_empty
+  it 'should copy a collection' do
+    expect(mkcol('/folder')).to be_created
+    copy('/folder', {}, {'HTTP_DESTINATION' => '/copy'})
+    expect(multi_status_created).to eq true
+    propfind('/copy', {}, input: propfind_xml(:resourcetype))
+    expect(multi_status_response('/D:propstat/D:prop/D:resourcetype/D:collection')).not_to be_empty
   end
 
   it 'should copy a collection resursively' do
-    mkcol('/folder').should be_created
-    put('/folder/a', :input => 'A').should be_created
-    put('/folder/b', :input => 'B').should be_created
+    expect(mkcol('/folder')).to be_created
+    expect(put('/folder/a', {}, input: 'A')).to be_created
+    expect(put('/folder/b', {}, input: 'B')).to be_created
     
-    copy('/folder', 'HTTP_DESTINATION' => '/copy')
-    multi_status_created.should eq true
-    propfind('/copy', :input => propfind_xml(:resourcetype))
-    multistatus_response('/D:propstat/D:prop/D:resourcetype/D:collection').should_not be_empty
-    get('/copy/a').body.should == 'A'
-    get('/copy/b').body.should == 'B'
+    copy('/folder', {}, {'HTTP_DESTINATION' => '/copy'})
+    expect(multi_status_created).to eq true
+    propfind('/copy', {}, input: propfind_xml(:resourcetype))
+    expect(multi_status_response('/D:propstat/D:prop/D:resourcetype/D:collection')).not_to be_empty
+    expect(get('/copy/a').body).to eq('A')
+    expect(get('/copy/b').body).to eq('B')
   end
   
   it 'should move a collection recursively' do
-    mkcol('/folder').should be_created
-    put('/folder/a', :input => 'A').should be_created
-    put('/folder/b', :input => 'B').should be_created
+    expect(mkcol('/folder')).to be_created
+    expect(put('/folder/a', {}, input: 'A')).to be_created
+    expect(put('/folder/b', {}, input: 'B')).to be_created
     
-    move('/folder', 'HTTP_DESTINATION' => '/move')
-    multi_status_created.should eq true
-    propfind('/move', :input => propfind_xml(:resourcetype))
-    multistatus_response('/D:propstat/D:prop/D:resourcetype/D:collection').should_not be_empty    
+    move('/folder', {}, {'HTTP_DESTINATION' => '/move'})
+    expect(multi_status_created).to eq true
+    propfind('/move', {}, input: propfind_xml(:resourcetype))
+    expect(multi_status_response('/D:propstat/D:prop/D:resourcetype/D:collection')).not_to be_empty    
     
-    get('/move/a').body.should == 'A'
-    get('/move/b').body.should == 'B'
-    get('/folder/a').should be_not_found
-    get('/folder/b').should be_not_found
+    expect(get('/move/a').body).to eq('A')
+    expect(get('/move/b').body).to eq('B')
+    expect(get('/folder/a')).to be_not_found
+    expect(get('/folder/b')).to be_not_found
   end
   
   it 'should create a collection' do
-    mkcol('/folder').should be_created
-    propfind('/folder', :input => propfind_xml(:resourcetype))
-    multistatus_response('/D:propstat/D:prop/D:resourcetype/D:collection').should_not be_empty
+    expect(mkcol('/folder')).to be_created
+    propfind('/folder', {}, input: propfind_xml(:resourcetype))
+    expect(multi_status_response('/D:propstat/D:prop/D:resourcetype/D:collection')).not_to be_empty
   end
   
   it 'should return full urls after creating a collection' do
-    mkcol('/folder').should be_created
-    propfind('/folder', :input => propfind_xml(:resourcetype))
-    multistatus_response('/D:propstat/D:prop/D:resourcetype/D:collection').should_not be_empty
-    multistatus_response('/D:href').first.text.should =~ /http:\/\/localhost(:\d+)?\/folder/
+    expect(mkcol('/folder')).to be_created
+    propfind('/folder', {}, input: propfind_xml(:resourcetype))
+    expect(multi_status_response('/D:propstat/D:prop/D:resourcetype/D:collection')).not_to be_empty
+    expect(multi_status_response('/D:href').first.text).to match(/http:\/\/example\.org(:\d+)?\/folder/)
   end
   
   it 'should not find properties for nonexistent resources' do
-    propfind('/non').should be_not_found
+    expect(propfind('/non')).to be_not_found
   end
   
   it 'should find all properties' do
@@ -241,26 +156,26 @@ describe DAV4Rack::Handler do
       xml.allprop
     end
     
-    propfind('http://localhost/', :input => xml)
+    propfind('http://example.org/', {}, input: xml)
     
-    multistatus_response('/D:href').first.text.strip.should =~ /http:\/\/localhost(:\d+)?\//
+    expect(multi_status_response('/D:href').first.text.strip).to match(/http:\/\/example\.org(:\d+)?\//)
 
     props = %w(creationdate displayname getlastmodified getetag resourcetype getcontenttype getcontentlength)
     props.each do |prop|
-      multistatus_response("/D:propstat/D:prop/D:#{prop}").should_not be_empty
+      expect(multi_status_response("/D:propstat/D:prop/D:#{prop}")).not_to be_empty
     end
   end
   
   it 'should find named properties' do
-    put('/test.html', :input => '<html/>').should be_created
-    propfind('/test.html', :input => propfind_xml(:getcontenttype, :getcontentlength))
+    expect(put('/test.html', {}, input: '<html/>')).to be_created
+    propfind('/test.html', {}, input: propfind_xml(:getcontenttype, :getcontentlength))
    
-    multistatus_response('/D:propstat/D:prop/D:getcontenttype').first.text.should == 'text/html'
-    multistatus_response('/D:propstat/D:prop/D:getcontentlength').first.text.should == '7'
+    expect(multi_status_response('/D:propstat/D:prop/D:getcontenttype').first.text).to eq('text/html')
+    expect(multi_status_response('/D:propstat/D:prop/D:getcontentlength').first.text).to eq('7')
   end
 
   it 'should lock a resource' do
-    put('/test', :input => 'body').should be_created
+    expect(put('/test', {}, input: 'body')).to be_created
     
     xml = render(:lockinfo) do |xml|
       xml.lockscope { xml.exclusive }
@@ -268,34 +183,31 @@ describe DAV4Rack::Handler do
       xml.owner { xml.href "http://test.de/" }
     end
 
-    lock('/test', :input => xml)
+    lock('/test', {}, input: xml)
     
-    response.should be_ok
+    expect(last_response).to be_ok
     
     match = lambda do |pattern|
-      response_xml.xpath "/D:prop/D:lockdiscovery/D:activelock#{pattern}"
+      Nokogiri.XML(last_response.body).xpath "/D:prop/D:lockdiscovery/D:activelock#{pattern}"
     end
     
-    match[''].should_not be_empty
+    expect(match['']).not_to be_empty
 
-    match['/D:locktype'].should_not be_empty
-    match['/D:lockscope'].should_not be_empty
-    match['/D:depth'].should_not be_empty
-    match['/D:timeout'].should_not be_empty
-    match['/D:locktoken'].should_not be_empty
-    match['/D:owner'].should_not be_empty
+    expect(match['/D:locktype']).not_to be_empty
+    expect(match['/D:lockscope']).not_to be_empty
+    expect(match['/D:depth']).not_to be_empty
+    expect(match['/D:timeout']).not_to be_empty
+    expect(match['/D:locktoken']).not_to be_empty
+    expect(match['/D:owner']).not_to be_empty
   end
   
   context "when mapping a path" do
-    
-    before do
-      @controller = DAV4Rack::Handler.new(:root => DOC_ROOT, :root_uri_path => '/webdav/')
-    end
-    
+    let(:controller) { DAV4Rack::Handler.new(root: TEST_ROOT_DIRECTORY, root_uri_path: '/webdav/') }
+
     it "should return correct urls" do
       # FIXME: a put to '/test' works, too -- should it?
-      put('/webdav/test', :input => 'body').should be_created
-      response.headers['location'].should =~ /http:\/\/localhost(:\d+)?\/webdav\/test/
+      expect(put('/webdav/test', {}, input: 'body')).to be_created
+      expect(last_response.headers['location']).to match(/http:\/\/example\.org(:\d+)?\/webdav\/test/)
     end
   end
 end
